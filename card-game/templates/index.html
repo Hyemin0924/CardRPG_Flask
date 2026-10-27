@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>협동카드 RPG</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<!-- 방 생성 / 참가 화면 -->
+<div id="createArea" class="landing">
+
+    <div class="eyebrow">CARD BATTLE GAME</div>
+    <h1>협동카드 RPG</h1>
+    <p class="subcopy">성장과 협력으로 보스전에 대비하는 멀티플레이 카드 보드게임</p>
+
+    <div class="landing-cards">
+
+        <div class="landing-card">
+
+            <h2>방 만들기</h2>
+
+            <label>인원 수</label>
+
+            <div class="player-count-picker" id="playerCountPicker">
+                <button type="button" data-count="1">1</button>
+                <button type="button" data-count="2" class="selected">2</button>
+                <button type="button" data-count="3">3</button>
+                <button type="button" data-count="4">4</button>
+            </div>
+
+            <input type="hidden" id="playerCount" value="2">
+
+            <label>내 직업 (보스전에서 사용)</label>
+
+            <select id="createJobSelect">
+                <option value="탱커">탱커</option>
+                <option value="딜러">딜러</option>
+                <option value="서포터">서포터</option>
+                <option value="힐러">힐러</option>
+            </select>
+
+            <button class="primary-btn" onclick="createGame()">
+                방 만들기
+            </button>
+
+        </div>
+
+        <div class="landing-card">
+
+            <h2>게임 참가</h2>
+
+            <label>방 코드</label>
+
+            <input
+                type="text"
+                id="roomIdInput"
+                maxlength="6"
+                placeholder="예: A1B2C3"
+            >
+
+            <label>내 직업 (보스전에서 사용)</label>
+
+            <select id="joinJobSelect">
+                <option value="탱커">탱커</option>
+                <option value="딜러">딜러</option>
+                <option value="서포터">서포터</option>
+                <option value="힐러">힐러</option>
+            </select>
+
+            <button class="primary-btn" onclick="joinGame()">
+                참가하기
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- 게임 화면 -->
+<div id="gameInfo" class="hidden">
+
+    <div class="topbar">
+
+        <div class="logo">협동카드 RPG</div>
+
+        <div class="badge">
+            <span class="label">YOU</span>
+            <span class="value" id="myPlayerInfo">-</span>
+        </div>
+
+        <div class="badge">
+            <span class="label">ROOM</span>
+            <span class="value" id="roomCodeDisplay">-</span>
+        </div>
+
+        <div class="badge">
+            <span class="label">ROUND</span>
+            <span class="value" id="roundInfo">-</span>
+        </div>
+
+        <div class="badge">
+            <span class="label">DECK</span>
+            <span class="value" id="deckInfo">-</span>
+        </div>
+
+        <div class="status-message" id="message">-</div>
+
+    </div>
+
+    <div class="app-layout" id="mainGameLayout">
+
+        <div class="sidebar">
+            <h2>THE FELLOWSHIP</h2>
+            <div id="partyArea"></div>
+        </div>
+
+        <div class="main-content">
+            <div id="myPlayerArea"></div>
+        </div>
+
+    </div>
+
+    <div class="turn-end-bar" id="turnEndBarWrap">
+        <button id="endTurnBtn" onclick="endTurn()">
+            END TURN
+        </button>
+    </div>
+
+</div>
+
+
+<!-- 보스전 -->
+<div id="bossArea" class="boss-area hidden">
+
+    <h2>보스전 준비 완료</h2>
+
+    <p>3턴이 종료되었습니다.</p>
+
+    <button onclick="startBossBattle()">보스전 시작</button>
+
+</div>
+
+
+<!-- 보스전 화면 -->
+<div id="bossBattleArea" class="boss-battle hidden">
+
+    <div class="boss-status-bar">
+        <div class="badge">
+            <span class="label">BOSS HP</span>
+            <span class="value" id="bossHpDisplay">-</span>
+        </div>
+        <div class="badge">
+            <span class="label">BOSS ATK</span>
+            <span class="value" id="bossAtkDisplay">-</span>
+        </div>
+        <div class="badge">
+            <span class="label">소환</span>
+            <span class="value" id="bossSummonsDisplay">-</span>
+        </div>
+        <div class="badge">
+            <span class="label">TURN</span>
+            <span class="value" id="bossTurnDisplay">-</span>
+        </div>
+    </div>
+
+    <div class="boss-battle-layout">
+
+        <div id="bossPartyArea" class="boss-party-grid"></div>
+
+        <pre id="bossLog" class="boss-log"></pre>
+
+    </div>
+
+    <div class="boss-battle-controls">
+        <button id="bossNextTurnBtn" onclick="nextBossTurn()">다음 턴 진행</button>
+    </div>
+
+    <div id="bossResultBanner" class="boss-result-banner hidden"></div>
+
+</div>
+
+
+<!-- 협력/딜레마 대상 선택 모달 -->
+<div id="cooperationModal" class="modal hidden">
+
+    <div class="modal-content">
+        <h2 id="cooperationModalTitle">카드 사용</h2>
+        <p>누구에게 사용할까요?</p>
+
+        <div id="cooperationTargets"></div>
+
+        <button class="cancel-btn" onclick="closeCooperationModal()">
+            취소
+        </button>
+
+    </div>
+
+</div>
+
+<script
+    src="{{ url_for('static', filename='game.js') }}"
+></script>
+
+</body>
+
+</html>

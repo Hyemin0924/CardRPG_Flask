@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>보스전 시뮬레이터 (풀버전)</title>
+  <style>
+    body{font-family:Inter,Segoe UI,Roboto,Arial;margin:16px;background:#0f172a;color:#e6eef8}
+    .container{max-width:1100px;margin:0 auto}
+    h1{font-size:20px;margin-bottom:8px}
+    section.card{background:#0b1220;border:1px solid #182033;padding:14px;border-radius:10px;margin-bottom:12px}
+    label{display:block;margin:6px 0 2px;font-size:13px}
+    input[type=number],select,input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid #213147;background:#071428;color:#e6eef8}
+    .row{display:flex;gap:10px}
+    .col{flex:1}
+    button{background:#2563eb;color:white;padding:8px 12px;border-radius:8px;border:0;cursor:pointer}
+    button.secondary{background:#475569}
+    #members{margin-top:8px}
+    .member{background:#071728;padding:10px;border-radius:8px;border:1px solid #172033;margin-bottom:8px}
+    .statbar{height:10px;background:#0b1220;border:1px solid #172033;border-radius:6px;overflow:hidden}
+    .hp{height:100%;background:linear-gradient(90deg,#ef4444,#f97316)}
+    .mp{height:100%;background:linear-gradient(90deg,#60a5fa,#3b82f6)}
+    pre#log{height:300px;overflow:auto;background:#021024;padding:10px;border-radius:8px;border:1px solid #092033;color:#cfe8ff}
+    .inline{display:inline-block;margin-right:8px}
+    .small{font-size:12px;color:#9fb3d6}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>보스전 시뮬레이터 (풀버전)</h1>
+
+    <section class="card">
+      <strong>1) 보스 정보</strong>
+      <div class="row" style="margin-top:8px">
+        <div class="col">
+          <label>보스 HP</label>
+          <input id="bossHp" type="number" value="52" min="1" step="0.01">
+        </div>
+        <div class="col">
+          <label>보스 ATK</label>
+          <input id="bossAtk" type="number" value="10" min="0.01" step="0.01">
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <strong>2) 파티 설정</strong>
+      <label>팀원 수</label>
+      <div class="row">
+        <div style="width:120px"><input id="memberCount" type="number" value="4" min="1" max="8"></div>
+        <div><button id="createMembers">멤버 생성</button> <button id="resetMembers" class="secondary">리셋</button></div>
+      </div>
+
+      <div id="members"></div>
+    </section>
+
+    <section class="card">
+      <strong>3) 전투</strong>
+      <div style="margin-top:8px">
+        <button id="start">전투 시작</button>
+        <button id="step" class="secondary">한 턴 진행</button>
+        <button id="stop" class="secondary">정지</button>
+        <span class="small" style="margin-left:8px">(주사위/버프/상태이상/영구 버프 포함, 소숫점은 소수점 둘째 자리에서 반올림)</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <strong>턴 로그</strong>
+      <pre id="log"></pre>
+    </section>
+
+    <section class="card">
+      <strong>전장 상태</strong>
+      <div id="status"></div>
+    </section>
+  </div>
+
+<script>
+// 헬퍼
+const $ = id=>document.getElementById(id)
+const rnd = (min, max)=>Math.floor(Math.random()*(max-min+1))+min
+const round2 = v => Math.round(v*100)/100
+
+let battleState = null
+let autoInterval = null
+
+function createMemberForms(){
+  const n = parseInt($('memberCount').value)||1
+  const container = $('members')
+  container.innerHTML = ''
+  for(let i=0;i<n;i++){
+    const div = document.createElement('div')
+    div.className='member'
+    div.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="flex:1">
+          <label>이름</label>
+          <input type="text" class="m-name" value="멤버${i+1}">
+        </div>
+        <div style="width:140px">
+          <label>포지션</label>
+          <select class="m-pos"><option>탱커</option><option>딜러</option><option>서포터</option><option>힐러</option></select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <div style="flex:1"><label>체력</label><input class="m-hp" type="number" value="12" step="0.01"></div>
+        <div style="flex:1"><label>공격력</label><input class="m-atk" type="number" value="12" step="0.01"></div>
+        <div style="flex:1"><label>지능</label><input class="m-int" type="number" value="12" step="0.01"></div>
+        <div style="flex:1"><label>정신력</label><input class="m-mp" type="number" value="2" step="1"></div>
+      </div>
+    `
+    container.appendChild(div)
+  }
+}
+
+function readParty(){
+  const members = Array.from(document.querySelectorAll('.member'))
+  const party = members.map((m, idx)=>{
+    return {
+      name: m.querySelector('.m-name').value || `멤버${idx+1}`,
+      pos: m.querySelector('.m-pos').value,
+      maxHp: round2(parseFloat(m.querySelector('.m-hp').value)||100),
+      hp: round2(parseFloat(m.querySelector('.m-hp').value)||100),
+      atk: round2(parseFloat(m.querySelector('.m-atk').value)||10),
+      intel: round2(parseFloat(m.querySelector('.m-int').value)||0),
+      mp: parseInt(m.querySelector('.m-mp').value)||1,
+      stunned: false,
+      // 전투 시작 시 초기값 저장
+      initialMaxHp: round2(parseFloat(m.querySelector('.m-hp').value)||100)
+    }
+  })
+  return party
+}
+
+function log(s){
+  const pre = $('log')
+  pre.textContent += s + '\n'
+  pre.scrollTop = pre.scrollHeight
+}
+
+function renderStatus(state){
+  const el = $('status')
+  let html = `<div style="margin-bottom:8px"><strong>보스</strong> HP: ${state.boss.hp.toFixed(2)} / ATK: ${state.boss.atk.toFixed(2)}  (소환: ${state.boss.summons})</div>`
+  html += '<div style="display:flex;flex-direction:column;gap:8px">'
+  state.party.forEach((p, idx)=>{
+    const hpRatio = Math.max(0, p.hp/p.maxHp)
+    const mpRatio = Math.max(0, p.mp/(p.initialMaxMp||p.mp||5))
+    html += `<div style="padding:8px;background:#031425;border-radius:8px;border:1px solid #0f2130">
+      <div style="display:flex;justify-content:space-between"><div><strong>${idx+1}. ${p.name}</strong> <span class="small">[${p.pos}]</span></div><div class="small">HP:${p.hp.toFixed(2)}/${p.maxHp.toFixed(2)} MP:${p.mp}</div></div>
+      <div class="statbar" style="margin-top:6px"><div class="hp" style="width:${(hpRatio*100)}%"></div></div>
+      <div class="statbar" style="margin-top:6px"><div class="mp" style="width:${Math.min(100,mpRatio*100)}%"></div></div>
+      <div class="small">ATK:${p.atk.toFixed(2)} INT:${p.intel.toFixed(2)} ${p.stunned? '| 상태: 기절' : ''}</div>
+    </div>`
+  })
+  html += '</div>'
+  el.innerHTML = html
+}
+
+function resetLog(){ $('log').textContent = '' }
+
+function initBattle(){
+  resetLog()
+  const bossHp = round2(parseFloat($('bossHp').value)||100)
+  const bossAtk = round2(parseFloat($('bossAtk').value)||10)
+  const party = readParty()
+  // 저장용 초기 MP/MaxHP
+  party.forEach(p=>{ p.initialMaxMp = p.mp; p.maxHp = p.maxHp; })
+  const boss = { hp: bossHp, atk: bossAtk, summons: 0 }
+  // 전투 상태
+  battleState = {
+    boss, party,
+    turn: 1,
+    buffs: {}, // 매턴 초기화
+    permanent: {} // 영구적 버프(서포터6번으로 처리되므로 직접 값이 already applied to party)
+  }
+  renderStatus(battleState)
+  log(`전투 시작 — 보스 HP ${boss.hp.toFixed(2)}, ATK ${boss.atk.toFixed(2)}\n파티 인원: ${party.length}`)
+}
+
+// 행동 구현
+function supportAction(supporter, state){
+  if(supporter.hp<=0 || supporter.mp<=0 || supporter.stunned) return
+  const dice = rnd(1,6)
+  log(`${supporter.name}이(가) 서포트 주사위: ${dice}`)
+  const buffs = state.buffs
+  switch(dice){
+    case 1:
+      buffs.dmg_reduce = (supporter.intel * 4)
+      log(`→ 버프: 다음 보스 공격 피해 ${buffs.dmg_reduce} 감소`)
+      break
+    case 2:
+      buffs.atk_buff = (supporter.intel / 6)
+      log(`→ 버프: 다음 턴 모든 팀원 공격력 +${buffs.atk_buff.toFixed(2)}`)
+      break
+    case 3:
+      buffs.no_stun = true
+      log(`→ 버프: 다음 보스의 상태이상 면역`)
+      break
+    case 4:
+      state.party.forEach(p=>{ if(p.hp>0 && p.mp>0) p.mp += 1 })
+      log(`→ 모든 팀원 정신력 +1`)
+      break
+    case 5:
+      buffs.heal_boost = 1 + (supporter.intel/10)
+      log(`→ 버프: 이번 턴 힐량 ${buffs.heal_boost.toFixed(2)}배`) 
+      break
+    case 6:
+      const inc = supporter.intel/10
+      state.party.forEach(p=>{
+        if(p.hp>0 && p.mp>0){
+          p.maxHp = round2(p.maxHp + inc)
+          p.atk = round2(p.atk + inc)
+          p.hp = Math.min(p.maxHp, round2(p.hp + inc))
+        }
+      })
+      log(`→ 영구 버프: 모든 팀원 최대체력 +${inc.toFixed(2)}, 공격력 +${inc.toFixed(2)}, 즉시 힐 +${inc.toFixed(2)}`)
+      break
+  }
+}
+function getPartyByPosition(state){
+  // 생존 멤버만 필터
+  const alive = state.party.filter(p=>p.hp>0 && p.mp>0);
+  // 포지션 순서대로 정렬
+  const posOrder = ['탱커','딜러','서포터','힐러'];
+  const sorted = [];
+  posOrder.forEach(pos=>{
+    alive.forEach(p=>{
+      if(p.pos === pos) sorted.push(p);
+    });
+  });
+  return sorted;
+}
+
+function playerAttack(player, state){
+  if(player.hp<=0 || player.mp<=0 || player.stunned){ log(`${player.name} 행동 불가`); return }
+  let dmg = 0
+  if(player.pos==='탱커' || player.pos==='서포터' || player.pos==='힐러'){
+    dmg = player.atk * 0.5
+  }else if(player.pos==='딜러'){
+    const dice = rnd(1,6)
+    if(dice===6){ dmg = player.atk * (1 + player.intel/24); log(`${player.name}이(가) 딜러 주사위 6! (지능 보정)`)}
+    else { dmg = player.atk; log(`${player.name}이(가) 딜러 주사위 ${dice}`) }
+  }
+  // 공격력 버프
+  if(state.buffs.atk_buff) dmg = dmg + state.buffs.atk_buff
+  dmg = round2(dmg)
+  state.boss.hp = round2(Math.max(0, state.boss.hp - dmg))
+  log(`${player.name}(${player.pos}) 공격: ${dmg.toFixed(2)} 피해 → 보스 HP ${state.boss.hp.toFixed(2)}`)
+
+  // 서포터는 공격 시 버프 발동
+  if(player.pos==='서포터') supportAction(player, state)
+}
+
+function healerAction(healer, state){
+  if(healer.hp<=0 || healer.mp<=0 || healer.stunned) {
+    log(`${healer.name} 행동 불가`);
+    return;
+  }
+
+  let healAmount = healer.intel * 0.2;
+  if(state.buffs.heal_boost) healAmount *= state.buffs.heal_boost;
+  healAmount = round2(healAmount);
+
+  const targets = state.party.filter(p=>p.hp>0 && p.mp>0);
+  if(targets.length===0) return;
+
+  targets.forEach(target=>{
+    const old = target.hp;
+    target.hp = Math.min(target.maxHp, round2(target.hp + healAmount));
+    log(`${healer.name} 힐: ${target.name} HP ${old.toFixed(2)} → ${target.hp.toFixed(2)} (힐량 ${healAmount.toFixed(2)})`);
+  });
+}
+
+
+function bossAction(state){
+  const boss = state.boss
+  const party = state.party
+  const dice = rnd(1,6)
+  log(`보스 주사위: ${dice}`)
+  const buffs = state.buffs
+  switch(dice){
+  case 1: // 광역
+    const allParty = getPartyByPosition(state);
+    allParty.forEach(p=>{
+      if(p.hp<=0 || p.mp<=0) return;
+      let dmg = boss.atk * 0.5;
+      if(p.pos==='탱커') dmg = dmg/2;
+      if(p.pos==='탱커'){
+        const tDice = rnd(1,6);
+        if(tDice===6){ dmg = Math.max(0, dmg - (p.intel/2)); log(`${p.name}이(가) 탱커 보호 주사위 6! 추가 피해 감소 ${p.intel/2}`) }
+      }
+      dmg = Math.max(0, dmg - (state.buffs.dmg_reduce||0));
+      dmg = round2(dmg);
+      p.hp = round2(p.hp - dmg);
+      log(`${p.name}이(가) 광역피해 ${dmg.toFixed(2)} (HP ${p.hp.toFixed(2)})`);
+    });
+    break;
+
+  case 2: // 단일 앞줄 공격
+    const frontParty = getPartyByPosition(state);
+    const front = frontParty[0]; // 탱커 → 딜러 → 서포터 → 힐러 순
+    if(front){
+      let dmg = boss.atk;
+      if(front.pos==='탱커'){
+        const tDice = rnd(1,6);
+        if(tDice===6){ dmg = Math.max(0, dmg - (front.intel/2)) }
+        dmg = dmg/2;
+      }
+      dmg = Math.max(0, dmg - (state.buffs.dmg_reduce||0));
+      dmg = round2(dmg);
+      front.hp = round2(front.hp - dmg);
+      log(`${front.name}이(가) 단일공격 ${dmg.toFixed(2)} 피해 (HP ${front.hp.toFixed(2)})`);
+    }
+    break;
+
+  case 3: // 광역 + 단일
+    const sortedParty = getPartyByPosition(state);
+
+    // 광역 공격
+    sortedParty.forEach(p=>{
+      let dmg = boss.atk * 0.3;
+      if(p.pos==='탱커') dmg = dmg / 2;
+      if(p.pos==='탱커'){
+        const tDice = rnd(1,6);
+        if(tDice===6){ dmg = Math.max(0, dmg - (p.intel/2)); log(`${p.name} 탱커 주사위 6 (광역): ${p.intel/2} 감소`) }
+      }
+      dmg = Math.max(0, dmg - (state.buffs.dmg_reduce||0));
+      dmg = round2(dmg);
+      p.hp = round2(p.hp - dmg);
+      log(`${p.name} 광역 ${dmg.toFixed(2)} 피해 (HP ${p.hp.toFixed(2)})`);
+    });
+
+    // 단일 공격 (전방)
+    const front2 = sortedParty[0];
+    if(front2){
+      let dmg2 = boss.atk * 0.7;
+      if(front2.pos==='탱커'){
+        const tDice = rnd(1,6);
+        if(tDice===6){ dmg2 = Math.max(0, dmg2 - (front2.intel/2)); log(`${front2.name} 탱커 주사위 6 (추가단일): ${front2.intel/2} 감소`) }
+        dmg2 = dmg2/2;
+      }
+      dmg2 = Math.max(0, dmg2 - (state.buffs.dmg_reduce||0));
+      dmg2 = round2(dmg2);
+      front2.hp = round2(front2.hp - dmg2);
+      log(`${front2.name} 추가 단일 ${dmg2.toFixed(2)} 피해 (HP ${front2.hp.toFixed(2)})`);
+    }
+    break;
+
+  case 4: // 상태이상 (뒤쪽)
+    if(state.buffs.no_stun) log('버프로 상태이상 무효화');
+    else{
+      const backParty = getPartyByPosition(state);
+      const back = backParty[backParty.length-1]; // 후방: 힐러 → 서포터 → 딜러 → 탱커
+      if(back){ back.stunned = true; log(`${back.name}이(가) 상태이상에 걸려 다음턴 행동 불가`) }
+    }
+    break;
+
+  case 5: // 친구 소환
+    if(boss.summons >= 2) log('이미 친구 2명 존재, 소환 실패');
+    else{ boss.summons += 1; log(`보스 친구 소환! 현재 ${boss.summons}명 (다음턴부터 공격 시작, 친구 피해: 보스ATK*0.5)`) }
+    break;
+
+  case 6: // 정신력 감소
+    const aliveParty = getPartyByPosition(state);
+    aliveParty.forEach(p=>{ p.mp = Math.max(0, p.mp-1); log(`${p.name} 정신력 -1 (현재 ${p.mp})`) });
+    break;
+}
+
+}
+
+function friendsAttack(state){
+  const party = state.party.filter(p=>p.hp>0 && p.mp>0)
+  for(let i=0;i<state.boss.summons;i++){
+    if(party.length===0) break
+    const target = party[Math.floor(Math.random()*party.length)]
+    const dmg = round2(state.boss.atk * 0.5)
+    target.hp = round2(target.hp - dmg)
+    log(`보스 친구가 ${target.name}에게 ${dmg.toFixed(2)} 피해 (HP ${target.hp.toFixed(2)})`)
+  }
+}
+
+function endOfTurnCleanup(state){
+  // 상태이상은 1턴만 유지 (이미 표시된 stunned은 다음 턴 행동에 적용되었으니 여기서 해제)
+  state.party.forEach(p=>{ p.stunned = false })
+  // 매턴 buffs 초기화 (단, 영구 버프는 이미 적용되어 있다)
+  state.buffs = {}
+}
+
+function isPartyDead(state){
+  return state.party.every(p=> p.hp<=0 || p.mp<=0)
+}
+
+function doTurn(state){
+  if(!state) return
+  log('\n=== 턴 ' + state.turn + ' 시작 ===')
+  // 매턴 buffs 초기화 여기선 빈 객체로 시작
+  state.buffs = {}
+// 포지션 순서대로 행동
+  const posOrder = ['탱커', '딜러', '서포터', '힐러'];
+  const sortedParty = [];
+  posOrder.forEach(pos=>{
+    state.party.forEach(p=>{
+      if(p.pos === pos) sortedParty.push(p);
+    });
+  });
+
+  for(const p of sortedParty){
+    if(state.boss.hp <= 0) break;
+    if(p.hp <= 0 || p.mp <= 0) continue;
+
+    if(p.stunned){
+      log(`${p.name}은(는) 기절로 이번 턴 행동불가`);
+      p.stunned = false; // 한 턴만 행동불가
+      continue;
+    }    if(p.pos==='힐러') healerAction(p, state)
+    playerAttack(p, state)
+  }
+
+  if(state.boss.hp<=0){ log('보스 HP 0 이하 — 승리!'); renderStatus(state); return 'win' }
+
+  // 보스 행동
+  bossAction(state)
+
+  // 친구 공격 (friend attacks start next turn; original spec: "다음턴부터 두번공격" — implement as they attack every boss turn once per summon)
+  if(state.boss.summons>0) friendsAttack(state)
+
+  // 전투 종료 체크
+  if(isPartyDead(state)){ log('모든 팀원 사망 또는 정신력 0 — 패배'); renderStatus(state); return 'lose' }
+
+  // 소숫점 반올림(둘째 자리에서)
+  state.boss.hp = round2(state.boss.hp)
+  state.party.forEach(p=>{ p.hp = round2(p.hp); p.atk = round2(p.atk); p.maxHp = round2(p.maxHp); })
+
+  renderStatus(state)
+  state.turn += 1
+  return 'continue'
+}
+
+// UI 이벤트
+$('createMembers').addEventListener('click', ()=> createMemberForms())
+$('resetMembers').addEventListener('click', ()=>{ $('members').innerHTML=''; $('memberCount').value=4 })
+$('start').addEventListener('click', ()=>{
+  initBattle()
+  // 자동 진행: 한 턴씩 600ms 마다 실행. (웹페이지 내 애니메이션)
+  if(autoInterval) clearInterval(autoInterval)
+  autoInterval = setInterval(()=>{
+    if(!battleState) return
+    const r = doTurn(battleState)
+    if(r==='win' || r==='lose') { clearInterval(autoInterval); autoInterval = null }
+  }, 600)
+})
+$('step').addEventListener('click', ()=>{
+  if(!battleState) initBattle()
+  const r = doTurn(battleState)
+  if(r==='win' || r==='lose') { if(autoInterval) clearInterval(autoInterval); autoInterval=null }
+})
+$('stop').addEventListener('click', ()=>{ if(autoInterval) clearInterval(autoInterval); autoInterval=null; log('자동 진행 정지') })
+
+// 초기 폼 생성
+createMemberForms()
+</script>
+</body>
+</html>
